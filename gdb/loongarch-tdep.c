@@ -53,7 +53,8 @@
 #include "observable.h"
 #include "loongarch-tdep.h"
 #include "arch/loongarch.h"
-#include "elf/loongarch.h"
+
+#include <algorithm>
 
 static int
 loongarch_rlen (struct gdbarch *gdbarch)
@@ -1539,10 +1540,9 @@ loongarch_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
     tdep->ef_abi = EF_LARCH_ABI_LP64;
 
   /* Check any target description for validity.  */
-  loongarch_gdbarch_features features;
-  features.rlen = tdep->ef_abi == EF_LARCH_ABI_LP32 ? 32 : 64;
   if (!tdesc_has_registers (tdesc))
-    tdesc = loongarch_lookup_target_description (features);
+    tdesc = loongarch_get_base_target_description (
+      tdep->ef_abi == EF_LARCH_ABI_LP32 ? 32 : 64);
 
   int valid_p = 1;
   const struct tdesc_feature *feature;
