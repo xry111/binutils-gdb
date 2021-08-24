@@ -43,51 +43,52 @@ loongarch_cpucfg_may_ptrace (uint64_t rj, int tid)
 struct target_desc *
 loongarch_linux_read_description_runtime (int tid)
 {
-  struct loongarch_gdbarch_features features;
+  int rlen, fpu32, fpu64, lbt, lsx, lasx;
 
   uint32_t cpucfg1 = loongarch_cpucfg_may_ptrace (1, tid);
-  features.rlen = cpucfg1 & 0x2 /* LA64 */? 64 : 32;
+  rlen = cpucfg1 & 0x2 /* LA64 */ ? 64 : 32;
 
   uint32_t cpucfg2 = loongarch_cpucfg_may_ptrace (2, tid);
-  features.fpu32 = 0, features.fpu64 = 0;
+  fpu32 = 0, fpu64 = 0;
   if (cpucfg2 & 0x4 /* FP_DP */)
-    features.fpu64 = 1;
+    fpu64 = 1;
   else if (cpucfg2 & 0x2 /* FP_SP */)
-    features.fpu32 = 1;
-  if (features.fpu32 || features.fpu64)
+    fpu32 = 1;
+  if (fpu32 || fpu64)
     {
       loongarch_elf_fpregset_t regset;
       struct iovec iovec = { .iov_base = &regset, .iov_len = sizeof (regset) };
       if (ptrace (PTRACE_GETREGSET, tid, NT_FPREGSET, &iovec) < 0)
-      {
-          features.fpu32 = 0;
-          features.fpu64 = 0;
-      }
+	fpu32 = 0, fpu64 = 0;
     }
 
+  lbt = 0;
   if (cpucfg2 & 0x1c0000 /* LBT_X86 || LBT_ARM || LBT_MIPS */)
     {
       loongarch_elf_lbtregset_t regset;
       struct iovec iovec = { .iov_base = &regset, .iov_len = sizeof (regset) };
       if (ptrace (PTRACE_GETREGSET, tid, NT_LARCH_LBT, &iovec) == 0)
-          features.lbt = 1;
+	lbt = 1;
     }
 
+  lsx = 0;
   if (cpucfg2 & 0x40 /* LSX */)
     {
       loongarch_elf_lsxregset_t regset;
       struct iovec iovec = { .iov_base = &regset, .iov_len = sizeof (regset) };
       if (ptrace (PTRACE_GETREGSET, tid, NT_LARCH_LSX, &iovec) == 0)
-          features.lsx = 1;
+	lsx = 1;
     }
 
+  lasx = 0;
   if (cpucfg2 & 0x80 /* LASX */)
     {
       loongarch_elf_lasxregset_t regset;
       struct iovec iovec = { .iov_base = &regset, .iov_len = sizeof (regset) };
       if (ptrace (PTRACE_GETREGSET, tid, NT_LARCH_LASX, &iovec) == 0)
-          features.lasx = 1;
+	lasx = 1;
     }
 
-  return loongarch_lookup_target_description (features);
+  return loongarch_create_target_description (rlen, fpu32, fpu64, lbt, lsx,
+					      lasx);
 }
