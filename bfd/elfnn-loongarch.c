@@ -2861,7 +2861,17 @@ loongarch_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	      /* No alloc space of func allocate_dynrelocs.  */
 	      if (unresolved_reloc
 		  && !(h && (h->is_weakalias || !h->dyn_relocs)))
-		loongarch_elf_append_rela (output_bfd, sreloc, &outrel);
+		{
+		  if (is_pic && r_type != R_LARCH_NN)
+		    fatal = loongarch_reloc_is_fatal (
+		      info, input_bfd, input_section, rel, howto,
+		      bfd_reloc_notsupported, is_undefweak, name,
+		      _("this reloc type can not be used when making a "
+			"shared object or PIE with different word size"));
+		  else
+		    loongarch_elf_append_rela (output_bfd, sreloc,
+					       &outrel);
+		}
 	    }
 
 	  relocation += rel->r_addend;
