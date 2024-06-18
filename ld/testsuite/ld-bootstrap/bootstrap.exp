@@ -69,6 +69,9 @@ if { [istarget "powerpc-*-*"] } {
 if { [is_elf_format] && ![is_bad_symtab] } {
     lappend test_flags "-Wl,-z,nosectionheader"
 }
+if { [supports_dt_relr] } then {
+    lappend test_flags "-Wl,-z,pack-relative-relocs"
+}
 
 set gcc_B_opt_save $gcc_B_opt
 
@@ -97,12 +100,13 @@ foreach flags $test_flags {
 	set testname "bootstrap"
     }}
 
-    # --static is meaningless.  --relax and -z nosectionheader are
-    # incompatible with -r.
+    # --static is meaningless.  --relax, -z nosectionheader, and
+    # -z pack-relative-relocs are incompatible with -r.
     regsub -- "-Wl," $flags "" partial_flags
     if { "$partial_flags" == "--static" \
 	 || "$partial_flags" == "--relax" \
-	 || [string match "*nosectionheader*" "$partial_flags"] } {
+	 || [string match "*nosectionheader*" "$partial_flags"]
+	 || [string match "*pack-relative-relocs*" "$partial_flags"] } {
 	set partial_flags ""
     }
 
