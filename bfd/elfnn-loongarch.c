@@ -128,8 +128,7 @@ struct loongarch_elf_section_data
   struct bfd_elf_section_data elf;
 
   /* &htab->relr[i] where i is the smallest number s.t.
-     htab->relr[i].sec == &elf.  NULL if there's no such i existing
-     or sec is got.  */
+     htab->relr[i].sec == &elf.  NULL if there exists no such i.  */
   struct relr_entry *relr;
 };
 
@@ -978,10 +977,8 @@ loongarch_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  && ELFNN_R_TYPE (rel[1].r_info) == R_LARCH_RELAX)
 	r_type = loongarch_tls_transition (abfd, info, h, r_symndx, r_type);
 
-      /* I cannot test -z pack-relative-relocs with stack-based relocs
-	 because stack-based relocs are already broken with -pie or
-	 -shared.  Let's just explicitly unsupport linking those old
-	 object files with -z pack-relative-relocs.  */
+      /* I don't want to spend time supporting DT_RELR with old object
+	 files doing stack-based relocs.  */
       if (info->enable_dt_relr
 	  && r_type >= R_LARCH_SOP_PUSH_PCREL
 	  && r_type <= R_LARCH_SOP_POP_32_U)
