@@ -235,16 +235,39 @@ loongarch_elf_new_section_hook (bfd *abfd, asection *sec)
 
    It's like SYMBOL_REFERENCES_LOCAL, but return true for local protected
    functions.  It happens to be same as SYMBOL_CALLS_LOCAL but let's not
-   reuse SYMBOL_CALLS_LOCAL or "CALLS" may puzzle people.  For LoongArch
-   there's no reason to treat local protected functions specially: we've
-   never had and we will not have copy relocation, and the so-called
-   "canonical PLT entry" is only generated when someone la.pcrel a
-   function in a DSO from another DSO or the executable, but this case is
-   considered a programming error.  Though as at now it's impossible to
-   detect such an error at link time, we may just warn or reject the use
-   of R_LARCH_PCALA_LO12 on external functions in the future when everyone
-   has switched to R_LARCH_CALL36.  */
-#define LARCH_SYM_LOCAL(info, h) \
+   reuse SYMBOL_CALLS_LOCAL or "CALLS" may puzzle people.
+
+   We do generate the so-called "canonical PLT entry" when someone attempts
+   to la.pcrel an external function.  But this is only an unwanted side-
+   effect from using R_LARCH_PCALA_{HI20,LO12} for medium and extreme
+   code model function call: we have the same problem as i386 where
+   R_386_PC32 is used for both call and lea (for medium code model new code
+   should use R_LARCH_CALL36 instead), but unlike i386 we never really
+   implemented "R_LARCH_COPY" thus attempting to la.pcrel an external
+   symbol is always considered a programming error unless it's a part of
+   a extreme code model function call, and pointer equality will be broken
+   even with a STV_DEFAULT function:
+
+   $ cat t.c
+   #include <assert.h>
+   void check(void *p) {assert(p == check);}
+   $ cat main.c
+   extern void check(void *);
+   int main(void) { check(check); }
+   $ cc t.c -fPIC -shared -o t.so
+   $ cc main.c -mdirect-extern-access t.so -Wl,-rpath=.
+   $ ./a.out
+   a.out: t.c:2: check: Assertion `p == check' failed.
+   Aborted
+
+   Thus handling STV_PROTECTED function specially just fixes nothing:
+   adding -fvisibility=protected compiling t.c will not magically fix
+   the inequality.  The only possible and correct fix is not to use
+   -mdirect-extern-access.
+
+   So we should remove this special handling not to penalize valid code
+   with an unsuccessful workaround for invalid code.  */
+#define LARCH_REF_LOCAL(info, h) \
   (_bfd_elf_symbol_refs_local_p ((h), (info), true))
 
 /* Generate a PLT header.  */
@@ -777,7 +800,7 @@ loongarch_tls_transition_without_check (struct bfd_link_info *info,
 					struct elf_link_hash_entry *h)
 {
   bool local_exec = bfd_link_executable (info)
-		    && LARCH_SYM_LOCAL (info, h);
+		    && LARCH_REF_LOCAL (info, h);
 
   switch (r_type)
     {
@@ -1291,7 +1314,7 @@ loongarch_elf_adjust_dynamic_symbol (struct bfd_link_info *info,
     {
       if (h->plt.refcount <= 0
 	  || (h->type != STT_GNU_IFUNC
-	      && (LARCH_SYM_LOCAL (info, h)
+	      && (LARCH_REF_LOCAL (info, h)
 		  || (ELF_ST_VISIBILITY (h->other) != STV_DEFAULT
 		      && h->root.type == bfd_link_hash_undefweak))))
 	{
@@ -1782,9 +1805,10 @@ local_allocate_ifunc_dyn_relocs (struct bfd_link_info *info,
   return true;
 }
 
-struct allocate_ifunc_dynrelocs_info {
+struct allocate_ifunc_dynrelocs_info
+{
   struct bfd_link_info *info;
-  bool local;
+  bool ref_local;
 };
 
 /* Allocate space in .plt, .got and associated reloc sections for
@@ -1817,14 +1841,14 @@ elfNN_allocate_ifunc_dynrelocs (struct elf_link_hash_entry *h, void *inf)
      here if it is defined and referenced in a non-shared object.  */
   if (h->type == STT_GNU_IFUNC && h->def_regular)
     {
-      if (LARCH_SYM_LOCAL (info, h) && ifunc_info->local)
+      if (LARCH_REF_LOCAL (info, h) && ifunc_info->ref_local)
 	return local_allocate_ifunc_dyn_relocs (info, h,
 						&h->dyn_relocs,
 						PLT_ENTRY_SIZE,
 						PLT_HEADER_SIZE,
 						GOT_ENTRY_SIZE,
 						false);
-      if (!LARCH_SYM_LOCAL (info, h) && !ifunc_info->local)
+      if (!LARCH_REF_LOCAL (info, h) && !ifunc_info->ref_local)
 	return _bfd_elf_allocate_ifunc_dyn_relocs (info, h,
 						   &h->dyn_relocs,
 						   PLT_ENTRY_SIZE,
@@ -1960,12 +1984,12 @@ record_relr_dyn_got_relocs (struct elf_link_hash_entry *h, void *inf)
 
   /* On LoongArch a GOT entry for undefined weak symbol is never relocated
      with R_LARCH_RELATIVE: we don't have -z dynamic-undefined-weak, thus
-     the GOT entry is either const 0 (if the symbol is LARCH_SYM_LOCAL) or
+     the GOT entry is either const 0 (if the symbol is LARCH_REF_LOCAL) or
      relocated with R_LARCH_NN (otherwise).  */
   if (h->root.type == bfd_link_hash_undefweak)
     return true;
 
-  if (!LARCH_SYM_LOCAL (info, h))
+  if (!LARCH_REF_LOCAL (info, h))
     return true;
   if (bfd_is_abs_symbol (&h->root))
     return true;
@@ -2057,11 +2081,11 @@ record_relr_non_got_relocs (bfd *input_bfd, struct bfd_link_info *info,
 	  /* On LoongArch an R_LARCH_NN against undefined weak symbol
 	     is never converted to R_LARCH_RELATIVE: we don't have
 	     -z dynamic-undefined-weak, thus the reloc is either removed
-	     (if the symbol is LARCH_SYM_LOCAL) or kept (otherwise).  */
+	     (if the symbol is LARCH_REF_LOCAL) or kept (otherwise).  */
 	  if (h->root.type == bfd_link_hash_undefweak)
 	    continue;
 
-	  if (!LARCH_SYM_LOCAL (info, h))
+	  if (!LARCH_REF_LOCAL (info, h))
 	    continue;
 	}
 
@@ -2350,21 +2374,20 @@ loongarch_elf_late_size_sections (bfd *output_bfd,
 
   /* Allocate global ifunc sym .plt and .got entries, and space for global
      ifunc sym dynamic relocs.  Note that we must do it for *all*
-     global ifunc symbols first before do it for any local ifunc symbol:
-     otherwise the plt_idx calculation in finish_dynamic_symbol will
-     break.  For LoongArch we consider STV_PROTECTED ifuncs local but
-     elf_link_hash_traverse may enumerate them, thus we need to be careful
-     and run it twice.  */
+     preemptable ifunc symbols first before doing it for any unpreemptable
+     ifunc symbol: otherwise the plt_idx calculation in
+     finish_dynamic_symbol will break.  For LoongArch we consider
+     STV_PROTECTED ifuncs unpreemptable but elf_link_hash_traverse may
+     enumerate them, thus we need to be careful and run it twice.  */
   ifunc_info.info = info;
-  ifunc_info.local = false;
+  ifunc_info.ref_local = false;
   elf_link_hash_traverse (&htab->elf, elfNN_allocate_ifunc_dynrelocs,
 			  &ifunc_info);
-  ifunc_info.local = true;
+  ifunc_info.ref_local = true;
   elf_link_hash_traverse (&htab->elf, elfNN_allocate_ifunc_dynrelocs,
 			  &ifunc_info);
 
   /* Allocate .plt and .got entries, and space for local ifunc symbols.  */
-  ifunc_info.local = true;
   htab_traverse (htab->loc_hash_table,
 		 elfNN_allocate_local_ifunc_dynrelocs, &ifunc_info);
 
@@ -3211,7 +3234,7 @@ loongarch_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	    {
 	      defined_local = !unresolved_reloc && !ignored;
 	      resolved_local =
-		defined_local && LARCH_SYM_LOCAL (info, h);
+		defined_local && LARCH_REF_LOCAL (info, h);
 	      resolved_dynly = !resolved_local;
 	      resolved_to_const = !resolved_local && !resolved_dynly;
 	    }
@@ -3300,7 +3323,7 @@ loongarch_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		      outrel.r_addend = 0;
 		    }
 
-		  if (LARCH_SYM_LOCAL (info, h))
+		  if (LARCH_REF_LOCAL (info, h))
 		    {
 
 		      if (htab->elf.splt != NULL)
@@ -3669,7 +3692,7 @@ loongarch_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		  if (!WILL_CALL_FINISH_DYNAMIC_SYMBOL (is_dyn,
 							bfd_link_pic (info), h)
 		      && ((bfd_link_pic (info)
-			   && LARCH_SYM_LOCAL (info, h))))
+			   && LARCH_REF_LOCAL (info, h))))
 		    {
 		      /* This is actually a static link, or it is a
 			 -Bsymbolic link and the symbol is defined
@@ -3814,7 +3837,7 @@ loongarch_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		asection *srel = htab->elf.srelgot;
 		bfd_vma tls_block_off = 0;
 
-		if (LARCH_SYM_LOCAL (info, h))
+		if (LARCH_REF_LOCAL (info, h))
 		  {
 		    BFD_ASSERT (elf_hash_table (info)->tls_sec);
 		    tls_block_off = relocation
@@ -3825,7 +3848,7 @@ loongarch_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		  {
 		    rela.r_offset = sec_addr (got) + got_off;
 		    rela.r_addend = 0;
-		    if (LARCH_SYM_LOCAL (info, h))
+		    if (LARCH_REF_LOCAL (info, h))
 		      {
 			/* Local sym, used in exec, set module id 1.  */
 			if (bfd_link_executable (info))
@@ -3858,7 +3881,7 @@ loongarch_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		if (tls_type & GOT_TLS_IE)
 		  {
 		    rela.r_offset = sec_addr (got) + got_off + ie_off;
-		    if (LARCH_SYM_LOCAL (info, h))
+		    if (LARCH_REF_LOCAL (info, h))
 		      {
 			/* Local sym, used in exec, set module id 1.  */
 			if (!bfd_link_executable (info))
@@ -4060,7 +4083,7 @@ loongarch_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 							    bfd_link_pic (info),
 							    h)
 			  && bfd_link_pic (info)
-			  && LARCH_SYM_LOCAL (info, h))
+			  && LARCH_REF_LOCAL (info, h))
 			{
 			  Elf_Internal_Rela rela;
 			  rela.r_offset = sec_addr (got) + got_off;
@@ -4614,7 +4637,7 @@ loongarch_tls_perform_trans (bfd *abfd, asection *sec,
 {
   unsigned long insn;
   bool local_exec = bfd_link_executable (info)
-		      && LARCH_SYM_LOCAL (info, h);
+		      && LARCH_REF_LOCAL (info, h);
   bfd_byte *contents = elf_section_data (sec)->this_hdr.contents;
   unsigned long r_type = ELFNN_R_TYPE (rel->r_info);
   unsigned long r_symndx = ELFNN_R_SYM (rel->r_info);
@@ -5326,7 +5349,7 @@ loongarch_elf_relax_section (bfd *abfd, asection *sec,
 	  else
 	    continue;
 
-	  if (h && LARCH_SYM_LOCAL (info, h))
+	  if (h && LARCH_REF_LOCAL (info, h))
 	    local_got = true;
 	  symtype = h->type;
 	}
@@ -5463,12 +5486,12 @@ loongarch_elf_finish_dynamic_symbol (bfd *output_bfd,
       if (htab->elf.splt)
 	{
 	  BFD_ASSERT ((h->type == STT_GNU_IFUNC
-		       && LARCH_SYM_LOCAL (info, h))
+		       && LARCH_REF_LOCAL (info, h))
 		      || h->dynindx != -1);
 
 	  plt = htab->elf.splt;
 	  gotplt = htab->elf.sgotplt;
-	  if (h->type == STT_GNU_IFUNC && LARCH_SYM_LOCAL (info, h))
+	  if (h->type == STT_GNU_IFUNC && LARCH_REF_LOCAL (info, h))
 	    relplt = htab->elf.srelgot;
 	  else
 	    relplt = htab->elf.srelplt;
@@ -5479,7 +5502,7 @@ loongarch_elf_finish_dynamic_symbol (bfd *output_bfd,
       else /* if (htab->elf.iplt) */
 	{
 	  BFD_ASSERT (h->type == STT_GNU_IFUNC
-		      && LARCH_SYM_LOCAL (info, h));
+		      && LARCH_REF_LOCAL (info, h));
 
 	  plt = htab->elf.iplt;
 	  gotplt = htab->elf.igotplt;
@@ -5567,7 +5590,7 @@ loongarch_elf_finish_dynamic_symbol (bfd *output_bfd,
 	      if (htab->elf.splt == NULL)
 		srela = htab->elf.irelplt;
 
-	      if (LARCH_SYM_LOCAL (info, h))
+	      if (LARCH_REF_LOCAL (info, h))
 		{
 		  asection *sec = h->root.u.def.section;
 		  rela.r_info = ELFNN_R_INFO (0, R_LARCH_IRELATIVE);
@@ -5604,7 +5627,7 @@ loongarch_elf_finish_dynamic_symbol (bfd *output_bfd,
 	      return true;
 	    }
 	}
-      else if (bfd_link_pic (info) && LARCH_SYM_LOCAL (info, h))
+      else if (bfd_link_pic (info) && LARCH_REF_LOCAL (info, h))
 	{
 	  asection *sec = h->root.u.def.section;
 	  bfd_vma linkaddr = h->root.u.def.value + sec->output_section->vma
