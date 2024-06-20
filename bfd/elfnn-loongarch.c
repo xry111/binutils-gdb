@@ -3359,11 +3359,22 @@ loongarch_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		  && !(h && (h->is_weakalias || !h->dyn_relocs)))
 		{
 		  if (is_pic && r_type != R_LARCH_NN)
-		    fatal = loongarch_reloc_is_fatal (
-		      info, input_bfd, input_section, rel, howto,
-		      bfd_reloc_notsupported, is_undefweak, name,
-		      _("this reloc type can not be used when making a "
-			"shared object or PIE with different word size"));
+		    {
+		      /* Not to use ELFCLASSNN in string literal or it'll
+			 puzzle gettext.  */
+
+		      /* xgettext:c-format  */
+		      char *msg = bfd_asprintf (
+			_("reloc is unresolved and cannot be turned to "
+			  "a runtime reloc in ELFCLASS%d"),
+			NN);
+
+		      /* loongarch_reloc_is_fatal will output
+			 "R_LARCH_32" or "R_LARCH_64" for us.  */
+		      fatal = loongarch_reloc_is_fatal (
+			info, input_bfd, input_section, rel, howto,
+			bfd_reloc_notsupported, is_undefweak, name, msg);
+		    }
 		  else if (info->enable_dt_relr
 			   && (ELFNN_R_TYPE (outrel.r_info)
 			       == R_LARCH_RELATIVE)
