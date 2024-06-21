@@ -1802,20 +1802,14 @@ local_allocate_ifunc_dyn_relocs (struct bfd_link_info *info,
   return true;
 }
 
-struct allocate_ifunc_dynrelocs_info
-{
-  struct bfd_link_info *info;
-  bool ref_local;
-};
-
 /* Allocate space in .plt, .got and associated reloc sections for
    ifunc dynamic relocs.  */
 
 static bool
-elfNN_allocate_ifunc_dynrelocs (struct elf_link_hash_entry *h, void *inf)
+elfNN_allocate_ifunc_dynrelocs (struct elf_link_hash_entry *h,
+				struct bfd_link_info *info,
+				bool ref_local)
 {
-  struct allocate_ifunc_dynrelocs_info *ifunc_info;
-  struct bfd_link_info *info;
   /* An example of a bfd_link_hash_indirect symbol is versioned
      symbol. For example: __gxx_personality_v0(bfd_link_hash_indirect)
      -> __gxx_personality_v0(bfd_link_hash_defined)
@@ -1831,21 +1825,18 @@ elfNN_allocate_ifunc_dynrelocs (struct elf_link_hash_entry *h, void *inf)
   if (h->root.type == bfd_link_hash_warning)
     h = (struct elf_link_hash_entry *) h->root.u.i.link;
 
-  ifunc_info = (struct allocate_ifunc_dynrelocs_info *) inf;
-  info = ifunc_info->info;
-
   /* Since STT_GNU_IFUNC symbol must go through PLT, we handle it
      here if it is defined and referenced in a non-shared object.  */
   if (h->type == STT_GNU_IFUNC && h->def_regular)
     {
-      if (LARCH_REF_LOCAL (info, h) && ifunc_info->ref_local)
+      if (LARCH_REF_LOCAL (info, h) && ref_local)
 	return local_allocate_ifunc_dyn_relocs (info, h,
 						&h->dyn_relocs,
 						PLT_ENTRY_SIZE,
 						PLT_HEADER_SIZE,
 						GOT_ENTRY_SIZE,
 						false);
-      if (!LARCH_REF_LOCAL (info, h) && !ifunc_info->ref_local)
+      if (!LARCH_REF_LOCAL (info, h) && !ref_local)
 	return _bfd_elf_allocate_ifunc_dyn_relocs (info, h,
 						   &h->dyn_relocs,
 						   PLT_ENTRY_SIZE,
@@ -1855,6 +1846,22 @@ elfNN_allocate_ifunc_dynrelocs (struct elf_link_hash_entry *h, void *inf)
     }
 
   return true;
+}
+
+static bool
+elfNN_allocate_ifunc_dynrelocs_ref_local (struct elf_link_hash_entry *h,
+					  void *info)
+{
+  return elfNN_allocate_ifunc_dynrelocs (h, (struct bfd_link_info *) info,
+					 true);
+}
+
+static bool
+elfNN_allocate_ifunc_dynrelocs_ref_global (struct elf_link_hash_entry *h,
+					   void *info)
+{
+  return elfNN_allocate_ifunc_dynrelocs (h, (struct bfd_link_info *) info,
+					 false);
 }
 
 /* Allocate space in .plt, .got and associated reloc sections for
@@ -1872,7 +1879,7 @@ elfNN_allocate_local_ifunc_dynrelocs (void **slot, void *inf)
       || h->root.type != bfd_link_hash_defined)
     abort ();
 
-  return elfNN_allocate_ifunc_dynrelocs (h, inf);
+  return elfNN_allocate_ifunc_dynrelocs_ref_local (h, inf);
 }
 
 /* Set DF_TEXTREL if we find any dynamic relocs that apply to
@@ -2246,7 +2253,6 @@ loongarch_elf_late_size_sections (bfd *output_bfd,
   bfd *dynobj;
   asection *s;
   bfd *ibfd;
-  struct allocate_ifunc_dynrelocs_info ifunc_info;
 
   htab = loongarch_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
@@ -2375,18 +2381,15 @@ loongarch_elf_late_size_sections (bfd *output_bfd,
      ifunc symbol: otherwise the plt_idx calculation in
      finish_dynamic_symbol will break.  For LoongArch we consider
      STV_PROTECTED ifuncs unpreemptable but elf_link_hash_traverse may
-     enumerate them, thus we need to be careful and run it twice.  */
-  ifunc_info.info = info;
-  ifunc_info.ref_local = false;
-  elf_link_hash_traverse (&htab->elf, elfNN_allocate_ifunc_dynrelocs,
-			  &ifunc_info);
-  ifunc_info.ref_local = true;
-  elf_link_hash_traverse (&htab->elf, elfNN_allocate_ifunc_dynrelocs,
-			  &ifunc_info);
+     enumerate them, thus we need to be careful and run two passes.  */
+  elf_link_hash_traverse (&htab->elf,
+			  elfNN_allocate_ifunc_dynrelocs_ref_local, info);
+  elf_link_hash_traverse (&htab->elf,
+			  elfNN_allocate_ifunc_dynrelocs_ref_global, info);
 
   /* Allocate .plt and .got entries, and space for local ifunc symbols.  */
   htab_traverse (htab->loc_hash_table,
-		 elfNN_allocate_local_ifunc_dynrelocs, &ifunc_info);
+		 elfNN_allocate_local_ifunc_dynrelocs, info);
 
   /* Don't allocate .got.plt section if there are no PLT.  */
   if (htab->elf.sgotplt && htab->elf.sgotplt->size == GOTPLT_HEADER_SIZE
