@@ -2497,9 +2497,9 @@ loongarch_elf_late_size_sections (bfd *output_bfd,
 	{
 	  /* Remove .relr.dyn based on relr_count, not size, since
 	     it is not sized yet.  */
-	    s->flags |= SEC_EXCLUDE;
+	  s->flags |= SEC_EXCLUDE;
 	  /* Allocate contents later.  */
-	    continue;
+	  continue;
 	}
       else
 	{
