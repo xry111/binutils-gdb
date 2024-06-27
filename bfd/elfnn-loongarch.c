@@ -2066,10 +2066,11 @@ record_relr_non_got_relocs (bfd *input_bfd, struct bfd_link_info *info,
   for (rel = relocs; rel < rel_end; rel++)
     {
       unsigned r_symndx = ELFNN_R_SYM (rel->r_info);
+      unsigned int r_type = ELFNN_R_TYPE (rel->r_info);
       struct elf_link_hash_entry *h = NULL;
       asection *def_sec = NULL;
 
-      if (ELFNN_R_TYPE (rel->r_info) != R_LARCH_NN
+      if ((r_type != R_LARCH_64 && r_type != R_LARCH_32)
 	  || rel->r_offset % 2 != 0)
 	continue;
 
