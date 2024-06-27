@@ -1137,8 +1137,32 @@ loongarch_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  only_need_pcrel = 1;
 	  break;
 
-	case R_LARCH_JUMP_SLOT:
 	case R_LARCH_32:
+	  if (ARCH_SIZE > 32
+	      && bfd_link_pic (info)
+	      && (sec->flags & SEC_ALLOC) != 0)
+	    {
+	      bool is_abs_symbol = false;
+
+	      if (r_symndx < symtab_hdr->sh_info)
+		is_abs_symbol = isym->st_shndx == SHN_ABS;
+	      else
+		is_abs_symbol = bfd_is_abs_symbol (&h->root);
+
+	      if (!is_abs_symbol)
+		{
+		  _bfd_error_handler
+		    (_("%pB: relocation R_LARCH_32 against non-absolute "
+		       "symbol `%s' cannot be used in ELFCLASS64 when "
+		       "making a shared object or PIE"),
+		     abfd, h ? h->root.root.string : "a local symbol");
+		  bfd_set_error (bfd_error_bad_value);
+		  return false;
+		}
+	    }
+
+	  /* Fall through.  */
+	case R_LARCH_JUMP_SLOT:
 	case R_LARCH_64:
 
 	  need_dynreloc = 1;
@@ -3387,32 +3411,16 @@ loongarch_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		  outrel.r_addend = relocation + rel->r_addend;
 		}
 
-	      /* No alloc space of func allocate_dynrelocs.  */
+	      /* No alloc space of func allocate_dynrelocs.
+		 No alloc space of invalid R_LARCH_32 in ELFCLASS64.  */
 	      if (unresolved_reloc
+		  && (ARCH_SIZE == 32 || r_type != R_LARCH_32)
 		  && !(h && (h->is_weakalias || !h->dyn_relocs)))
 		{
-		  if (is_pic && r_type != R_LARCH_NN)
-		    {
-		      /* Not to use ELFCLASSNN in string literal or it'll
-			 puzzle gettext.  */
-
-		      /* xgettext:c-format  */
-		      char *msg = bfd_asprintf (
-			_("reloc is unresolved and cannot be turned to "
-			  "a runtime reloc in ELFCLASS%d"),
-			NN);
-
-		      /* loongarch_reloc_is_fatal will output
-			 "R_LARCH_32" or "R_LARCH_64" for us.  */
-		      fatal = loongarch_reloc_is_fatal (
-			info, input_bfd, input_section, rel, howto,
-			bfd_reloc_notsupported, is_undefweak, name, msg);
-		    }
-		  else if (info->enable_dt_relr
-			   && (ELFNN_R_TYPE (outrel.r_info)
-			       == R_LARCH_RELATIVE)
-			   && input_section->alignment_power != 0
-			   && rel->r_offset % 2 == 0)
+		  if (info->enable_dt_relr
+		      && (ELFNN_R_TYPE (outrel.r_info) == R_LARCH_RELATIVE)
+		      && input_section->alignment_power != 0
+		      && rel->r_offset % 2 == 0)
 		    /* Don't emit a relative relocation that is packed,
 		       only apply the addend (as if we are applying the
 		       original R_LARCH_NN reloc in a PDE).  */
