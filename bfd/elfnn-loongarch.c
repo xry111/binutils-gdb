@@ -128,7 +128,8 @@ struct loongarch_elf_section_data
   struct bfd_elf_section_data elf;
 
   /* &htab->relr[i] where i is the smallest number s.t.
-     htab->relr[i].sec == &elf.  NULL if there exists no such i.  */
+     elf_section_data (htab->relr[i].sec) == &elf.
+     NULL if there exists no such i.  */
   struct relr_entry *relr;
 };
 
@@ -4557,8 +4558,7 @@ loongarch_relax_delete_bytes (bfd *abfd,
   unsigned int sec_shndx = _bfd_elf_section_from_bfd_section (abfd, sec);
   struct bfd_elf_section_data *data = elf_section_data (sec);
   bfd_byte *contents = data->this_hdr.contents;
-  struct relr_entry *relr =
-    ((struct loongarch_elf_section_data *)elf_section_data (sec))->relr;
+  struct relr_entry *relr = loongarch_elf_section_data (sec)->relr;
   struct loongarch_elf_link_hash_table *htab =
     loongarch_elf_hash_table (link_info);
   struct relr_entry *relr_end = NULL;
