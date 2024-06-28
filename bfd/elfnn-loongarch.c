@@ -2438,11 +2438,11 @@ loongarch_elf_late_size_sections (bfd *output_bfd,
   elf_link_hash_traverse (&htab->elf,
 			  elfNN_allocate_ifunc_dynrelocs_ref_global, info);
 
-  /* Now hidden_ifuncs ifuncs.  */
+  /* Next hidden_ifuncs follows.  */
   elf_link_hash_traverse (&htab->elf,
 			  elfNN_allocate_ifunc_dynrelocs_ref_local, info);
 
-  /* Finally local ifuncs.  */
+  /* Finally local_ifuncs.  */
   htab_traverse (htab->loc_hash_table,
 		 elfNN_allocate_local_ifunc_dynrelocs, info);
 
